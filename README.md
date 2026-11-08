@@ -12,6 +12,10 @@ Host settings: `Config::settings` (`HostSetting`: section, key, title, options, 
 
 Pointer: Relative = one-finger drag is the left stick (70 pt = full), quick tap holds `tapBit` 0.1 s, two-finger drag is the right stick. Absolute = quick taps are queued for `PopTap`; any drag (one or two fingers) pans with the right stick.
 
+Gear sheet action rows: `Config::actions` (`HostAction`: a title function and `run(UIViewController*)`) for the host's own UI, e.g. a login form.
+
+Keyboard: `Config::keys` (`KeyBind`) maps a Bluetooth/USB keyboard (GCKeyboard) onto buttons, sticks and triggers. Pinch: `Config::pinch`. Ghost mode (`Kind::HideToggle`) makes the controls invisible but still pressable.
+
 ## Adding to a host
 ```cmake
 add_subdirectory(/path/to/touchkit touchkit)   # needs OBJCXX; builds libtouchkit.a
@@ -29,3 +33,7 @@ touchkit::Attach((__bridge void*)gameView, c);
 - `Kind::HideToggle` = ghost mode: invisible-but-live buttons (a held control flashes at 35%, the toggle stays at 25%, the gear stays). `Show controls: Off` in the gear sheet is different: the buttons are gone and taps go to the game.
 - `Config::pinch` (off by default): two fingers pinch or pan, whichever dominates first; a pinch writes `stick[pinch.stick][pinch.axis]`.
 - `Config::keys` (`KeyBind`): hardware keyboard, polled in `Read()` and merged with touch (bits OR, stick binds summed and clamped, trigger binds). A keyboard never auto-hides the controls; only a GCController does. Listed read-only under the gear sheet's "Keyboard..." row.
+
+## License
+
+GPL-3.0 (see LICENSE). Used by [sims2pets-ios](https://github.com/vladbondarenko97/sims2pets-ios).
