@@ -53,6 +53,14 @@ struct HostSetting {
     std::function<void(int)> apply;     // the chosen index; main thread when the player picks
 };
 
+// A row of the gear sheet that runs the host's own UI (a login form, ...).
+// `run` gets a UIViewController* to present from (main thread). `title` is
+// asked each time the sheet opens, so it can show state ("Cloud saves: on").
+struct HostAction {
+    std::function<std::string()> title;
+    std::function<void(void* presenter)> run;
+};
+
 // Two-finger pinch as a stick axis (like a touchpad). Per gesture, whichever of
 // pinch (distance change) or pan (centroid move) dominates after a small dead zone
 // decides, so a pinch does not also pan. Writes stick[stick][axis] =
@@ -80,6 +88,7 @@ struct Config {
     std::vector<ControlDef> controls;
     std::vector<InputDef> addable;
     std::vector<HostSetting> settings;
+    std::vector<HostAction> actions;     // gear sheet rows after the sections
     Pinch pinch;
     std::vector<KeyBind> keys;
     uint32_t tapBit = 0;                // Relative pointer: a quick tap holds this bit for 0.1 s

@@ -1,4 +1,4 @@
-// touchkit: see touchkit.h. Built with ARC. Ported from the NFS overlay (ios_touch.mm).
+// touchkit: see touchkit.h. Built with ARC.
 #if !__has_feature(objc_arc)
 #error compile with -fobjc-arc
 #endif
@@ -712,6 +712,19 @@ namespace
             const int n = int(i);
             [a addAction:[UIAlertAction actionWithTitle:[Str(sections[i]) stringByAppendingString:@"…"]
                 style:UIAlertActionStyleDefault handler:^(UIAlertAction*) { OpenSection(n); }]];
+        }
+        for (size_t i = 0; i < s_cfg.actions.size(); i++)
+        {
+            const size_t n = i;
+            [a addAction:[UIAlertAction actionWithTitle:Str(s_cfg.actions[i].title()) style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction*) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        UIViewController* top = s_view.window.rootViewController;
+                        while (top.presentedViewController)
+                            top = top.presentedViewController;
+                        s_cfg.actions[n].run((__bridge void*)top);
+                    });
+                }]];
         }
         if (!s_cfg.keys.empty())
             [a addAction:[UIAlertAction actionWithTitle:@"Keyboard…" style:UIAlertActionStyleDefault
