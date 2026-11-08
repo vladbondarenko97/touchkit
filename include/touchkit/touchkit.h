@@ -115,6 +115,9 @@ bool PopTap(Tap* out);                  // any thread, oldest first
 // ready: it calls every apply() with the saved (or default) index, on the calling thread.
 void ApplyHostSettings();
 int GetHostSetting(const std::string& key);   // any thread; -1 if unknown
+// Main thread: picks an option (saved; applied when `apply`), e.g. from a
+// preset row's apply. The sheet shows it the next time it opens.
+void SetHostSetting(const std::string& key, int index, bool apply = true);
 
 // True while the controls are shown: hidden with a hardware controller
 // connected (Auto) or when the player turned them off. The gear stays.

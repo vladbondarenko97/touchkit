@@ -1281,6 +1281,17 @@ namespace touchkit
         return -1;
     }
 
+    void SetHostSetting(const std::string& key, int index, bool apply)
+    {
+        for (size_t i = 0; i < s_cfg.settings.size(); i++)
+            if (s_cfg.settings[i].key == key)
+            {
+                const int n = int(s_cfg.settings[i].options.size());
+                SetHostValue(i, std::clamp(index, 0, n - 1), apply);
+                return;
+            }
+    }
+
     PointerMode GetPointerMode() { return PointerMode(s_pointerMode.load()); }
 
     bool PopTap(Tap* out)
