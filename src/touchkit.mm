@@ -276,6 +276,7 @@ namespace
 
     void OpenSettings();
     void OpenSection(int section);
+    void OpenKeyboard();
 
     void SaveSettings();
 
@@ -625,6 +626,53 @@ namespace
         Present(a);
     }
 
+    // HID usage to a name, for the read-only keyboard list.
+    NSString* KeyName(uint16_t k)
+    {
+        if (k >= 0x04 && k <= 0x1D) return [NSString stringWithFormat:@"%c", 'A' + (k - 0x04)];
+        if (k >= 0x1E && k <= 0x26) return [NSString stringWithFormat:@"%d", 1 + (k - 0x1E)];
+        switch (k)
+        {
+        case 0x27: return @"0";
+        case 0x28: return @"Return";   case 0x29: return @"Esc";    case 0x2A: return @"Backspace";
+        case 0x2B: return @"Tab";      case 0x2C: return @"Space";  case 0x2D: return @"-";
+        case 0x2E: return @"=";        case 0x36: return @",";      case 0x37: return @".";
+        case 0x4B: return @"Page Up";  case 0x4E: return @"Page Down";
+        case 0x4F: return @"Right";    case 0x50: return @"Left";   case 0x51: return @"Down";
+        case 0x52: return @"Up";
+        default: return [NSString stringWithFormat:@"Key %u", unsigned(k)];
+        }
+    }
+
+    void OpenKeyboard()
+    {
+        if (s_editing || !s_view.window)
+            return;
+        std::vector<std::string> labels;
+        NSMutableArray<NSMutableString*>* names = [NSMutableArray array];
+        for (const KeyBind& k : s_cfg.keys)
+        {
+            size_t i = std::find(labels.begin(), labels.end(), k.label) - labels.begin();
+            if (i == labels.size())
+            {
+                labels.push_back(k.label);
+                [names addObject:[NSMutableString string]];
+            }
+            if (names[i].length)
+                [names[i] appendString:@" / "];
+            [names[i] appendString:KeyName(k.key)];
+        }
+        NSMutableString* text = [NSMutableString string];
+        for (size_t i = 0; i < labels.size(); i++)
+            [text appendFormat:@"%@: %@\n", Str(labels[i]), names[i]];
+        UIAlertController* a = [UIAlertController alertControllerWithTitle:@"Keyboard" message:text
+            preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"Back" style:UIAlertActionStyleCancel handler:^(UIAlertAction*) {
+            dispatch_async(dispatch_get_main_queue(), ^{ OpenSettings(); });
+        }]];
+        Present(a);
+    }
+
     // The settings sheet: each row changes its setting and shows the sheet again.
     void OpenSettings()
     {
@@ -662,6 +710,9 @@ namespace
             [a addAction:[UIAlertAction actionWithTitle:[Str(sections[i]) stringByAppendingString:@"…"]
                 style:UIAlertActionStyleDefault handler:^(UIAlertAction*) { OpenSection(n); }]];
         }
+        if (!s_cfg.keys.empty())
+            [a addAction:[UIAlertAction actionWithTitle:@"Keyboard…" style:UIAlertActionStyleDefault
+                handler:^(UIAlertAction*) { dispatch_async(dispatch_get_main_queue(), ^{ OpenKeyboard(); }); }]];
         [a addAction:[UIAlertAction actionWithTitle:@"Edit layout" style:UIAlertActionStyleDefault
             handler:^(UIAlertAction*) { SetEditing(true); }]];
         [a addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
@@ -1186,6 +1237,23 @@ namespace touchkit
             }
         if (CACurrentMediaTime() < s_tapUntil)
             s.buttons |= s_cfg.tapBit;
+        if (!s_cfg.keys.empty())
+            if (GCKeyboardInput* ki = GCKeyboard.coalescedKeyboard.keyboardInput)
+            {
+                for (const KeyBind& k : s_cfg.keys)
+                {
+                    if (![ki buttonForKeyCode:GCKeyCode(k.key)].pressed)
+                        continue;
+                    s.buttons |= k.bit;
+                    if (k.stick >= 0 && k.stick < 2)
+                        s.stick[k.stick][k.axis & 1] += k.value;
+                    if (k.trigger >= 0 && k.trigger < 2)
+                        s.trigger[k.trigger] = 1.0f;
+                }
+                for (auto& st : s.stick)
+                    for (float& v : st)
+                        v = std::clamp(v, -1.0f, 1.0f);
+            }
         return s;
     }
 

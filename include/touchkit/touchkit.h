@@ -59,12 +59,29 @@ struct HostSetting {
 // clamp(sign * gain * (d / d0 - 1) * 3, -1, 1); spreading is positive.
 struct Pinch { int stick = 1; int axis = 1; float sign = 1; float gain = 1; bool enabled = false; };
 
+// A hardware-keyboard binding (GCKeyCode / HID usage). Read() merges the keyboard
+// with touch: bits are OR'd in, stick binds add `value` to stick[stick][axis]
+// (summed with touch, then clamped to -1..1, so opposite keys cancel), trigger
+// binds set trigger[trigger] = 1. A keyboard never triggers the controls' auto-hide
+// (only a game controller does). Binds sharing a `label` show as one line under
+// the gear sheet's read-only "Keyboard..." row.
+struct KeyBind {
+    uint16_t key;
+    uint32_t bit = 0;
+    int stick = -1;         // 0 left, 1 right; -1 none
+    int axis = 0;           // 0 = x, 1 = y
+    float value = 0;
+    int trigger = -1;       // 0 = L, 1 = R; -1 none
+    const char* label = "";
+};
+
 struct Config {
     std::string prefsPrefix;            // NSUserDefaults key prefix, e.g. "sims2.touch"
     std::vector<ControlDef> controls;
     std::vector<InputDef> addable;
     std::vector<HostSetting> settings;
     Pinch pinch;
+    std::vector<KeyBind> keys;
     uint32_t tapBit = 0;                // Relative pointer: a quick tap holds this bit for 0.1 s
 };
 
