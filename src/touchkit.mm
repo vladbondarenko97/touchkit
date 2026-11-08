@@ -415,6 +415,7 @@ namespace
         [u setBool:s_haptics forKey:Key("haptics")];
         [u setInteger:s_showMode forKey:Key("show")];
         [u setBool:s_ghost forKey:Key("ghost")];
+        [u synchronize];  // now: the app may be killed (a reinstall) before iOS writes it
     }
 
     void SaveLayout()
@@ -440,6 +441,7 @@ namespace
         [u setObject:slots forKey:Key("profiles")];
         [u setInteger:s_slot forKey:Key("slot")];
         [u setFloat:s_opacity forKey:Key("opacity")];
+        [u synchronize];
     }
 
     void ReadSaved(Saved& s, id v)
@@ -566,6 +568,7 @@ namespace
         }
         NSString* key = [NSString stringWithFormat:@"%@.setting.%@", Str(s_cfg.prefsPrefix), Str(s_cfg.settings[i].key)];
         [[NSUserDefaults standardUserDefaults] setInteger:v forKey:key];
+        [[NSUserDefaults standardUserDefaults] synchronize];
         if (apply && s_cfg.settings[i].apply)
             s_cfg.settings[i].apply(v);
     }
