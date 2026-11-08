@@ -17,7 +17,7 @@ namespace
 {
     using namespace touchkit;
 
-    enum class K { Button, Trigger, Stick, Settings };
+    enum class K { Button, Trigger, Stick, Settings, Toggle };
 
     struct Control
     {
@@ -93,6 +93,8 @@ namespace
     UIView* s_toolbar = nil;
     UISlider* s_sizeSlider = nil;
     UISegmentedControl* s_slotControl = nil;
+
+    std::vector<int> s_hostVals;  // per Config::settings, under s_mutex
 
     NSString* Key(const char* suffix) { return [NSString stringWithFormat:@"%s.%s", s_cfg.prefsPrefix.c_str(), suffix]; }
     NSString* Str(const std::string& s) { return [NSString stringWithUTF8String:s.c_str()] ?: @""; }
@@ -203,6 +205,8 @@ namespace
             c.shape.lineWidth = selected ? 3 : s_editing ? 2 : 1.5;
             c.shape.lineDashPattern = s_editing && !selected ? @[ @6, @4 ] : nil;
             c.text.opacity = std::max(s_opacity, 0.35f) * faint;
+            if (c.kind == K::Toggle)
+                c.text.string = s_pointerMode == int(PointerMode::Absolute) ? @"TAP" : @"DRAG";
             CGFloat size = c.text.fontSize * (c.label.find('\n') != std::string::npos ? 2.4 : 1.25);
             c.text.frame = CGRectMake(o.x - c.r, o.y - size / 2, c.r * 2, size);
             if (IsStick(c))
@@ -257,10 +261,22 @@ namespace
     }
 
     void OpenSettings();
+    void OpenSection(int section);
+
+    void SaveSettings();
 
     void Press(int i)
     {
-        s_controls[size_t(i)].holds++;
+        Control& c = s_controls[size_t(i)];
+        if (c.kind == K::Toggle)  // flips the pointer mode, holds nothing
+        {
+            s_pointerMode = s_pointerMode == 0 ? 1 : 0;
+            SaveSettings();
+            [s_haptic impactOccurred];
+            Redraw();
+            return;
+        }
+        c.holds++;
         if (s_haptics)
             [s_haptic impactOccurred];
     }
@@ -306,7 +322,8 @@ namespace
     Control MakeExtra(int input, const std::string& label, float fx, float fy, float r)
     {
         const InputDef& in = s_cfg.addable[size_t(input)];
-        Control c{ label, in.kind == Kind::Trigger ? K::Trigger : K::Button, fx, fy, r, in.bit, in.axis };
+        Control c{ label, in.kind == Kind::Trigger ? K::Trigger : in.kind == Kind::PointerToggle ? K::Toggle : K::Button,
+                   fx, fy, r, in.bit, in.axis };
         c.input = input;
         return c;
     }
@@ -466,7 +483,7 @@ namespace
         if (c)
             s_sizeSlider.value = c->r;
         const bool other = c && c->kind != K::Settings;  // (the gear stays, as it is)
-        s_labelButton.enabled = other;
+        s_labelButton.enabled = other && c->kind != K::Toggle;  // (its label shows the mode)
         s_removeButton.enabled = other;
         [s_removeButton setTitle:c && c->input < 0 ? (c->hidden ? @"Show" : @"Hide") : @"Remove" forState:UIControlStateNormal];
         s_slotControl.selectedSegmentIndex = s_slot;
@@ -498,6 +515,92 @@ namespace
         [top presentViewController:vc animated:YES completion:nil];
     }
 
+    // Host settings: the section sheet, a setting's options, and Reset.
+    void OpenSection(int section);
+
+    std::vector<std::string> SectionNames()
+    {
+        std::vector<std::string> sections;
+        for (const HostSetting& h : s_cfg.settings)
+            if (std::find(sections.begin(), sections.end(), h.section) == sections.end())
+                sections.push_back(h.section);
+        return sections;
+    }
+
+    int HostValue(size_t i)
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        return s_hostVals[i];
+    }
+
+    void SetHostValue(size_t i, int v, bool apply)
+    {
+        {
+            std::lock_guard<std::mutex> lock(s_mutex);
+            s_hostVals[i] = v;
+        }
+        NSString* key = [NSString stringWithFormat:@"%@.setting.%@", Str(s_cfg.prefsPrefix), Str(s_cfg.settings[i].key)];
+        [[NSUserDefaults standardUserDefaults] setInteger:v forKey:key];
+        if (apply && s_cfg.settings[i].apply)
+            s_cfg.settings[i].apply(v);
+    }
+
+    void OpenOptions(int section, int setting)
+    {
+        const HostSetting& h = s_cfg.settings[size_t(setting)];
+        UIAlertController* a = [UIAlertController alertControllerWithTitle:Str(h.title) message:nil
+            preferredStyle:UIAlertControllerStyleActionSheet];
+        const int current = HostValue(size_t(setting));
+        for (size_t o = 0; o < h.options.size(); o++)
+        {
+            const int n = int(o);
+            NSString* title = (int(o) == current ? @"✓ " : @"    ");
+            [a addAction:[UIAlertAction actionWithTitle:[title stringByAppendingString:Str(h.options[o])]
+                style:UIAlertActionStyleDefault handler:^(UIAlertAction*) {
+                    SetHostValue(size_t(setting), n, true);
+                    dispatch_async(dispatch_get_main_queue(), ^{ OpenSection(section); });
+                }]];
+        }
+        [a addAction:[UIAlertAction actionWithTitle:@"Back" style:UIAlertActionStyleCancel handler:^(UIAlertAction*) {
+            dispatch_async(dispatch_get_main_queue(), ^{ OpenSection(section); });
+        }]];
+        Present(a);
+    }
+
+    void OpenSection(int section)
+    {
+        const std::vector<std::string> names = SectionNames();
+        if (section < 0 || size_t(section) >= names.size() || s_editing || !s_view.window)
+            return;
+        UIAlertController* a = [UIAlertController alertControllerWithTitle:Str(names[size_t(section)]) message:nil
+            preferredStyle:UIAlertControllerStyleActionSheet];
+        for (size_t i = 0; i < s_cfg.settings.size(); i++)
+        {
+            const HostSetting& h = s_cfg.settings[i];
+            if (h.section != names[size_t(section)])
+                continue;
+            const int v = HostValue(i);
+            NSString* cur = v >= 0 && size_t(v) < h.options.size() ? Str(h.options[size_t(v)]) : @"?";
+            const int n = int(i);
+            [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@: %@", Str(h.title), cur]
+                style:UIAlertActionStyleDefault handler:^(UIAlertAction*) {
+                    dispatch_async(dispatch_get_main_queue(), ^{ OpenOptions(section, n); });
+                }]];
+        }
+        [a addAction:[UIAlertAction actionWithTitle:@"Reset settings to defaults" style:UIAlertActionStyleDestructive
+            handler:^(UIAlertAction*) {
+                const std::vector<std::string> names = SectionNames();
+                for (size_t i = 0; i < s_cfg.settings.size(); i++)
+                    if (section >= 0 && size_t(section) < names.size() && s_cfg.settings[i].section == names[size_t(section)])
+                        SetHostValue(i, s_cfg.settings[i].defaultIndex, true);
+                dispatch_async(dispatch_get_main_queue(), ^{ OpenSection(section); });
+            }]];
+        [a addAction:[UIAlertAction actionWithTitle:@"Back" style:UIAlertActionStyleCancel handler:^(UIAlertAction*) {
+            dispatch_async(dispatch_get_main_queue(), ^{ OpenSettings(); });
+        }]];
+        Present(a);
+    }
+
     // The settings sheet: each row changes its setting and shows the sheet again.
     void OpenSettings()
     {
@@ -525,6 +628,16 @@ namespace
             Apply();
             OpenSettings();
         }]];
+        std::vector<std::string> sections;
+        for (const HostSetting& h : s_cfg.settings)
+            if (std::find(sections.begin(), sections.end(), h.section) == sections.end())
+                sections.push_back(h.section);
+        for (size_t i = 0; i < sections.size(); i++)
+        {
+            const int n = int(i);
+            [a addAction:[UIAlertAction actionWithTitle:[Str(sections[i]) stringByAppendingString:@"…"]
+                style:UIAlertActionStyleDefault handler:^(UIAlertAction*) { OpenSection(n); }]];
+        }
         [a addAction:[UIAlertAction actionWithTitle:@"Edit layout" style:UIAlertActionStyleDefault
             handler:^(UIAlertAction*) { SetEditing(true); }]];
         [a addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
@@ -964,6 +1077,24 @@ namespace touchkit
         if (s_view || !parent)
             return;
         s_cfg = config;
+        bool hasToggle = false;
+        for (const InputDef& in : s_cfg.addable)
+            hasToggle |= in.kind == Kind::PointerToggle;
+        if (!hasToggle)
+            s_cfg.addable.push_back({ "Pointer toggle", "DRAG", Kind::PointerToggle, 0, 0 });
+        {
+            NSUserDefaults* u = [NSUserDefaults standardUserDefaults];
+            std::lock_guard<std::mutex> lock(s_mutex);
+            for (const HostSetting& h : s_cfg.settings)
+            {
+                NSString* key = [NSString stringWithFormat:@"%@.setting.%@", Str(s_cfg.prefsPrefix), Str(h.key)];
+                const int top = std::max(int(h.options.size()) - 1, 0);
+                int v = std::clamp(h.defaultIndex, 0, top);
+                if ([u objectForKey:key])
+                    v = std::clamp(int([u integerForKey:key]), 0, top);
+                s_hostVals.push_back(v);
+            }
+        }
         s_ptrTouches = [NSMutableArray array];
         s_view = [[TKOverlay alloc] initWithFrame:parent.bounds];
         s_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -973,7 +1104,8 @@ namespace touchkit
 
         for (const ControlDef& d : config.controls)
         {
-            Control c{ d.label, d.kind == Kind::Trigger ? K::Trigger : d.kind == Kind::Stick ? K::Stick : K::Button,
+            Control c{ d.label, d.kind == Kind::Trigger ? K::Trigger : d.kind == Kind::Stick ? K::Stick
+                       : d.kind == Kind::PointerToggle ? K::Toggle : K::Button,
                        d.fx, d.fy, d.r, d.bit, d.axis };
             c.hidden = d.hiddenByDefault;
             s_controls.push_back(c);
@@ -1008,6 +1140,27 @@ namespace touchkit
         if (CACurrentMediaTime() < s_tapUntil)
             s.buttons |= s_cfg.tapBit;
         return s;
+    }
+
+    void ApplyHostSettings()
+    {
+        std::vector<int> vals;
+        {
+            std::lock_guard<std::mutex> lock(s_mutex);
+            vals = s_hostVals;
+        }
+        for (size_t i = 0; i < vals.size(); i++)
+            if (s_cfg.settings[i].apply)
+                s_cfg.settings[i].apply(vals[i]);
+    }
+
+    int GetHostSetting(const std::string& key)
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        for (size_t i = 0; i < s_hostVals.size(); i++)
+            if (s_cfg.settings[i].key == key)
+                return s_hostVals[i];
+        return -1;
     }
 
     PointerMode GetPointerMode() { return PointerMode(s_pointerMode.load()); }

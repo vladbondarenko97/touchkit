@@ -5,12 +5,16 @@
 // touches that miss every control into a pointer. Implementation: touchkit.mm.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace touchkit {
 
-enum class Kind { Button, Trigger, Stick };
+// PointerToggle: a button that flips the pointer mode (label TAP = Absolute,
+// DRAG = Relative); the framework adds it to the editor's Add list itself.
+// Append-only: values are used in saved tables.
+enum class Kind { Button, Trigger, Stick, PointerToggle };
 
 // One built-in control. Saved layouts address these by their index in
 // Config::controls: ONLY APPEND new rows, never insert or reorder.
@@ -33,10 +37,23 @@ struct InputDef {
     int axis;
 };
 
+// A host setting shown in the gear sheet. Rows of one `section` share one
+// "<section>..." entry there; its sheet lists "Title: Current option" rows, a row
+// opens its options, and "Reset settings to defaults" restores the section.
+struct HostSetting {
+    std::string section;                // "Video", "Audio"
+    std::string key;                    // saved as <prefsPrefix>.setting.<key>
+    std::string title;
+    std::vector<std::string> options;
+    int defaultIndex = 0;
+    std::function<void(int)> apply;     // the chosen index; main thread when the player picks
+};
+
 struct Config {
     std::string prefsPrefix;            // NSUserDefaults key prefix, e.g. "sims2.touch"
     std::vector<ControlDef> controls;
     std::vector<InputDef> addable;
+    std::vector<HostSetting> settings;
     uint32_t tapBit = 0;                // Relative pointer: a quick tap holds this bit for 0.1 s
 };
 
@@ -65,6 +82,11 @@ Sample Read();
 //   two-finger drag pans with the right stick (no tap is queued for drags).
 PointerMode GetPointerMode();
 bool PopTap(Tap* out);                  // any thread, oldest first
+
+// Host settings. Call ApplyHostSettings() once after Attach, when the host is
+// ready: it calls every apply() with the saved (or default) index, on the calling thread.
+void ApplyHostSettings();
+int GetHostSetting(const std::string& key);   // any thread; -1 if unknown
 
 // True while the controls are shown: hidden with a hardware controller
 // connected (Auto) or when the player turned them off. The gear stays.

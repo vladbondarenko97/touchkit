@@ -8,6 +8,8 @@ Reusable iOS (15+) on-screen touch controls: drawn buttons, triggers and floatin
 - `PointerMode GetPointerMode()`, `bool PopTap(Tap*)` (absolute-mode taps, 0..1 of the view, oldest first), `bool Visible()`.
 - `Config`: `prefsPrefix`, `controls` (the built-in table; saved layouts address rows by index, so only ever APPEND rows), `addable` (what the editor's Add offers), `tapBit`.
 
+Host settings: `Config::settings` (`HostSetting`: section, key, title, options, defaultIndex, apply) become "<Section>..." rows in the gear sheet; call `ApplyHostSettings()` once after `Attach`. `Kind::PointerToggle` is an on-screen button that flips the pointer mode.
+
 Pointer: Relative = one-finger drag is the left stick (70 pt = full), quick tap holds `tapBit` 0.1 s, two-finger drag is the right stick. Absolute = quick taps are queued for `PopTap`; any drag (one or two fingers) pans with the right stick.
 
 ## Adding to a host
