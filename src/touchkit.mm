@@ -17,7 +17,7 @@ namespace
 {
     using namespace touchkit;
 
-    enum class K { Button, Trigger, Stick, Settings, Toggle };
+    enum class K { Button, Trigger, Stick, Settings, Toggle, Hide };
 
     struct Control
     {
@@ -36,7 +36,20 @@ namespace
         CGPoint origin{}, at{};
     };
 
+    K ToK(Kind k)
+    {
+        switch (k)
+        {
+        case Kind::Trigger: return K::Trigger;
+        case Kind::Stick: return K::Stick;
+        case Kind::PointerToggle: return K::Toggle;
+        case Kind::HideToggle: return K::Hide;
+        default: return K::Button;
+        }
+    }
+
     Config s_cfg;
+    bool s_ghost = false;  // ghost mode: controls invisible but live
     // s_controls: the built-ins (Config::controls), then the gear (always, can't be
     // removed or hidden), then the added controls. The gear is saved under "g".
     std::vector<Control> s_controls, s_defaults;
@@ -76,6 +89,16 @@ namespace
     CGFloat s_ptrTravel = 0;
     NSUInteger s_ptrMax = 0;
     constexpr CGFloat kPointerRadius = 70;
+    CGFloat s_ptrD0 = 0;  // two fingers: their distance at the start
+    int s_ptrGesture = 0;  // 0 undecided, 1 pan, 2 pinch
+
+    CGFloat PtrDistance()
+    {
+        if (s_ptrTouches.count < 2)
+            return 0;
+        CGPoint a = [s_ptrTouches[0] locationInView:s_view], b = [s_ptrTouches[1] locationInView:s_view];
+        return std::hypot(a.x - b.x, a.y - b.y);
+    }
 
     // Layout slots: diffs from the table as built, saved on every change.
     struct Saved { std::string label; float fx, fy, r; bool hidden; };
@@ -130,28 +153,17 @@ namespace
         return best;
     }
 
-    // The stick that takes a finger at `p`: the left one anywhere in the lower
-    // outer part of its side (it centres where the finger lands), the right one
-    // near its circle.
+    // The stick that takes a finger at `p`: only one landing near its drawn circle
+    // (fixed position; the rest of the screen is the game's and the pointer's).
     int StickAt(CGPoint p)
     {
-        CGRect b = s_view.bounds;
         for (size_t i = 0; i < s_controls.size(); i++)
         {
             const Control& c = s_controls[i];
             if (!IsStick(c) || !Visible(c) || c.touch)
                 continue;
-            bool in;
-            if (c.axis == 0)
-            {
-                const bool leftSide = c.fx < 0.5f;
-                in = (leftSide ? p.x < b.size.width * 0.42f : p.x > b.size.width * 0.58f) && p.y > b.size.height * 0.30f;
-            }
-            else
-            {
-                CGPoint o = CentreOf(c);
-                in = std::hypot(float(p.x - o.x), float(p.y - o.y)) < c.r * 1.6f;
-            }
+            CGPoint o = CentreOf(c);
+            const bool in = std::hypot(float(p.x - o.x), float(p.y - o.y)) < c.r * 1.3f;
             if (in)
                 return int(i);
         }
@@ -197,7 +209,9 @@ namespace
             c.shape.path = [UIBezierPath bezierPathWithArcCenter:o radius:c.r startAngle:0 endAngle:2 * M_PI clockwise:YES].CGPath;
             const bool held = c.holds > 0 || (IsStick(c) && c.touch);
             // (hidden, seen in the editor; the gear alone, with the controls off)
-            const float faint = c.hidden ? 0.35f : (c.kind == K::Settings && !Shown()) ? 0.5f : 1.0f;
+            float faint = c.hidden ? 0.35f : (c.kind == K::Settings && !Shown()) ? 0.5f : 1.0f;
+            if (s_ghost && !s_editing && c.kind != K::Settings)
+                faint *= c.kind == K::Hide ? 0.25f : held ? 0.35f : 0.0f;  // (invisible but live; flashes when held)
             c.shape.fillColor = [UIColor colorWithWhite:held ? 1.0 : 0.15 alpha:(held ? 0.45 : 0.30) * s_opacity * faint].CGColor;
             const bool selected = s_editing && s_selected >= 0 && &c == &s_controls[size_t(s_selected)];
             c.shape.strokeColor = selected ? UIColor.systemYellowColor.CGColor
@@ -220,7 +234,7 @@ namespace
                 const CGFloat k = c.r >= 50 ? 28 : 18;
                 c.knob.path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(o.x + dx, o.y + dy) radius:k startAngle:0
                     endAngle:2 * M_PI clockwise:YES].CGPath;
-                c.knob.opacity = s_opacity;
+                c.knob.opacity = s_opacity * (s_ghost && !s_editing ? (held ? 0.35f : 0.0f) : 1.0f);
             }
         }
         s_toolbar.hidden = !s_editing;
@@ -276,6 +290,14 @@ namespace
             Redraw();
             return;
         }
+        if (c.kind == K::Hide)
+        {
+            s_ghost = !s_ghost;
+            SaveSettings();
+            [s_haptic impactOccurred];
+            Redraw();
+            return;
+        }
         c.holds++;
         if (s_haptics)
             [s_haptic impactOccurred];
@@ -322,7 +344,7 @@ namespace
     Control MakeExtra(int input, const std::string& label, float fx, float fy, float r)
     {
         const InputDef& in = s_cfg.addable[size_t(input)];
-        Control c{ label, in.kind == Kind::Trigger ? K::Trigger : in.kind == Kind::PointerToggle ? K::Toggle : K::Button,
+        Control c{ label, ToK(in.kind),
                    fx, fy, r, in.bit, in.axis };
         c.input = input;
         return c;
@@ -391,6 +413,7 @@ namespace
         [u setInteger:s_pointerMode forKey:Key("pointer")];
         [u setBool:s_haptics forKey:Key("haptics")];
         [u setInteger:s_showMode forKey:Key("show")];
+        [u setBool:s_ghost forKey:Key("ghost")];
     }
 
     void SaveLayout()
@@ -472,6 +495,7 @@ namespace
         s_pointerMode = std::clamp(int([u integerForKey:Key("pointer")]), 0, 1);
         if ([u objectForKey:Key("haptics")])
             s_haptics = [u boolForKey:Key("haptics")];
+        s_ghost = [u boolForKey:Key("ghost")];
         if ([u objectForKey:Key("show")])
             s_showMode = std::clamp(int([u integerForKey:Key("show")]), 0, 2);
     }
@@ -697,6 +721,8 @@ namespace
     void PointerRestart()
     {
         s_ptrOrigin = s_ptrLast = Centroid();
+        s_ptrD0 = PtrDistance();
+        s_ptrGesture = 0;
         PointerOut(0, 0, 0, 0);
     }
 }
@@ -822,8 +848,25 @@ namespace
         s_ptrTravel = std::max(s_ptrTravel, std::hypot(dx, dy));
         const float x = std::clamp(float(dx / kPointerRadius), -1.f, 1.f);
         const float y = std::clamp(float(-dy / kPointerRadius), -1.f, 1.f);
-        // Two fingers (or any drag in Absolute mode) pan with the right stick.
-        if (s_ptrTouches.count >= 2 || s_pointerMode == int(PointerMode::Absolute))
+        // Two fingers (or any drag in Absolute mode) pan with the right stick; with
+        // Config::pinch, two fingers are a pinch or a pan, whichever dominates first.
+        const bool two = s_ptrTouches.count >= 2;
+        if (two && s_cfg.pinch.enabled && s_ptrD0 > 1)
+        {
+            const CGFloat dd = PtrDistance() - s_ptrD0;
+            if (s_ptrGesture == 0 && std::max(std::hypot(dx, dy), std::fabs(dd)) > 10)
+                s_ptrGesture = std::fabs(dd) > std::hypot(dx, dy) ? 2 : 1;
+            if (s_ptrGesture == 2)
+            {
+                const Pinch& pc = s_cfg.pinch;
+                std::lock_guard<std::mutex> lock(s_mutex);
+                s_ptr[0][0] = s_ptr[0][1] = s_ptr[1][0] = s_ptr[1][1] = 0;
+                s_ptr[pc.stick & 1][pc.axis & 1] = std::clamp(pc.sign * pc.gain * float(PtrDistance() / s_ptrD0 - 1) * 3, -1.0f, 1.0f);
+            }
+            else if (s_ptrGesture == 1)
+                PointerOut(0, 0, x, y);
+        }
+        else if (two || s_pointerMode == int(PointerMode::Absolute))
             PointerOut(0, 0, x, y);
         else
             PointerOut(x, y, 0, 0);
@@ -1080,8 +1123,13 @@ namespace touchkit
         bool hasToggle = false;
         for (const InputDef& in : s_cfg.addable)
             hasToggle |= in.kind == Kind::PointerToggle;
+        bool hasHide = false;
+        for (const InputDef& in : s_cfg.addable)
+            hasHide |= in.kind == Kind::HideToggle;
         if (!hasToggle)
             s_cfg.addable.push_back({ "Pointer toggle", "DRAG", Kind::PointerToggle, 0, 0 });
+        if (!hasHide)
+            s_cfg.addable.push_back({ "Hide-UI toggle", "HIDE", Kind::HideToggle, 0, 0 });
         {
             NSUserDefaults* u = [NSUserDefaults standardUserDefaults];
             std::lock_guard<std::mutex> lock(s_mutex);
@@ -1104,8 +1152,7 @@ namespace touchkit
 
         for (const ControlDef& d : config.controls)
         {
-            Control c{ d.label, d.kind == Kind::Trigger ? K::Trigger : d.kind == Kind::Stick ? K::Stick
-                       : d.kind == Kind::PointerToggle ? K::Toggle : K::Button,
+            Control c{ d.label, ToK(d.kind),
                        d.fx, d.fy, d.r, d.bit, d.axis };
             c.hidden = d.hiddenByDefault;
             s_controls.push_back(c);

@@ -14,7 +14,11 @@ namespace touchkit {
 // PointerToggle: a button that flips the pointer mode (label TAP = Absolute,
 // DRAG = Relative); the framework adds it to the editor's Add list itself.
 // Append-only: values are used in saved tables.
-enum class Kind { Button, Trigger, Stick, PointerToggle };
+// HideToggle: a button that toggles "ghost" mode: every control but this one and the
+// gear is drawn invisible yet still works (it flashes visible while held). Also
+// added to the editor's Add list by the framework. Sticks are fixed-position: they take
+// only fingers landing within ~1.3x their radius of the drawn circle.
+enum class Kind { Button, Trigger, Stick, PointerToggle, HideToggle };
 
 // One built-in control. Saved layouts address these by their index in
 // Config::controls: ONLY APPEND new rows, never insert or reorder.
@@ -49,11 +53,18 @@ struct HostSetting {
     std::function<void(int)> apply;     // the chosen index; main thread when the player picks
 };
 
+// Two-finger pinch as a stick axis (like a touchpad). Per gesture, whichever of
+// pinch (distance change) or pan (centroid move) dominates after a small dead zone
+// decides, so a pinch does not also pan. Writes stick[stick][axis] =
+// clamp(sign * gain * (d / d0 - 1) * 3, -1, 1); spreading is positive.
+struct Pinch { int stick = 1; int axis = 1; float sign = 1; float gain = 1; bool enabled = false; };
+
 struct Config {
     std::string prefsPrefix;            // NSUserDefaults key prefix, e.g. "sims2.touch"
     std::vector<ControlDef> controls;
     std::vector<InputDef> addable;
     std::vector<HostSetting> settings;
+    Pinch pinch;
     uint32_t tapBit = 0;                // Relative pointer: a quick tap holds this bit for 0.1 s
 };
 
